@@ -1,8 +1,7 @@
 // tools/scripts/publish-nx-mcp-patched.mjs
 // Usage: node tools/scripts/publish-nx-mcp-patched.mjs [--dry-run]
 //
-// Builds nx-mcp from this branch (fix/nx-cloud-oauth-credentials plus this script) and
-// commits the bundle to the orphan nx-mcp-patched branch, which holds only main.js,
+// Builds nx-mcp from this branch (the SOURCES fixes plus this script) and commits the bundle to the orphan nx-mcp-patched branch, which holds only main.js,
 // package.json and README.md so `npx github:pedroyan/nx-console#nx-mcp-patched` runs
 // it without cloning or building nx-console. --dry-run commits locally but skips the push.
 import { execFileSync } from 'child_process';
@@ -12,9 +11,24 @@ import { join } from 'path';
 
 const REMOTE = 'origin';
 const REPO = 'pedroyan/nx-console';
-const SOURCE_BRANCH = 'fix/nx-cloud-oauth-credentials';
 const DIST_BRANCH = 'nx-mcp-patched';
-const UPSTREAM_PR = 'https://github.com/nrwl/nx-console/pull/3299';
+// `marker` is a string that only a bundle built with the fix contains.
+const SOURCES = [
+  {
+    branch: 'fix/nx-cloud-oauth-credentials',
+    pr: 3299,
+    summary:
+      'Nx Cloud requests authenticate with the `nx login` OAuth credential',
+    marker: 'Nx-Cloud-OAuth-Access-Token',
+  },
+  {
+    branch: 'fix/ci-information-pr-number-branch',
+    pr: 3300,
+    summary:
+      'CI tools find the CIPE for a branch when Nx Cloud labels it with the PR number',
+    marker: 'includeRecentBranches',
+  },
+];
 
 const dryRun = process.argv.includes('--dry-run');
 
@@ -40,19 +54,25 @@ git(
   [
     'fetch',
     REMOTE,
-    ...[SOURCE_BRANCH, DIST_BRANCH].map(
+    ...[...SOURCES.map((source) => source.branch), DIST_BRANCH].map(
       (branch) => `+refs/heads/${branch}:refs/remotes/${REMOTE}/${branch}`,
     ),
   ],
   { stdio: 'inherit' },
 );
-const sourceSha = git(['rev-parse', `${REMOTE}/${SOURCE_BRANCH}`]);
-try {
-  git(['merge-base', '--is-ancestor', sourceSha, 'HEAD']);
-} catch {
-  fail(
-    `Rebase onto ${REMOTE}/${SOURCE_BRANCH} first, so the build includes its latest commit.`,
-  );
+// Compared by patch rather than ancestry, because rebasing this branch rewrites the
+// fix commits it carries.
+for (const source of SOURCES) {
+  source.sha = git(['rev-parse', `${REMOTE}/${source.branch}`]);
+  if (
+    git(['cherry', 'HEAD', source.sha])
+      .split('\n')
+      .some((line) => line.startsWith('+'))
+  ) {
+    fail(
+      `Rebase onto ${REMOTE}/${source.branch} first, so the build includes its latest commit.`,
+    );
+  }
 }
 const headSha = git(['rev-parse', 'HEAD']);
 const buildBranch = git(['branch', '--show-current']) || headSha;
@@ -71,17 +91,22 @@ execFileSync(
 const bundle = readFileSync('dist/apps/nx-mcp/main.js', 'utf8');
 // The workspace libs resolve through node_modules symlinks, so a node_modules shared
 // with another checkout silently bundles that checkout's libs instead of this branch's.
-if (!bundle.includes('Nx-Cloud-OAuth-Access-Token')) {
-  fail(
-    'The bundle lacks the OAuth fix. Is node_modules/@nx-console linked to another checkout?',
-  );
+for (const source of SOURCES) {
+  if (!bundle.includes(source.marker)) {
+    fail(
+      `The bundle lacks the fix from ${source.branch}. Is node_modules/@nx-console linked to another checkout?`,
+    );
+  }
 }
 
 const readme = `# nx-mcp (patched build)
 
-Prebuilt \`nx-mcp\` from [\`${SOURCE_BRANCH}\`](https://github.com/${REPO}/tree/${SOURCE_BRANCH})
-at \`${sourceSha}\`, the change proposed in [nrwl/nx-console#3299](${UPSTREAM_PR}): Nx Cloud
-requests authenticate with the \`nx login\` OAuth credential.
+Prebuilt \`nx-mcp\` with these changes, which are proposed upstream:
+
+${SOURCES.map(
+  (source) =>
+    `- [nrwl/nx-console#${source.pr}](https://github.com/nrwl/nx-console/pull/${source.pr}): ${source.summary}. From [\`${source.branch}\`](https://github.com/${REPO}/tree/${source.branch}) at \`${source.sha}\`.`,
+).join('\n')}
 
 This branch holds only the build output, so \`npx\` can run it without cloning or building
 nx-console:
@@ -90,11 +115,11 @@ nx-console:
 claude mcp add nx-mcp-patched -- npx -y github:${REPO}#${DIST_BRANCH} --minimal
 \`\`\`
 
-Delete this branch once the fix ships in the published \`nx-mcp\`.
+Delete this branch once these changes ship in the published \`nx-mcp\`.
 
 Built from \`${buildBranch}\` at \`${headSha}\`. To update it, rebase
 [\`nx-mcp-patched-build\`](https://github.com/${REPO}/tree/nx-mcp-patched-build) onto
-\`${SOURCE_BRANCH}\` and run \`node tools/scripts/publish-nx-mcp-patched.mjs\`.
+the branches above and run \`node tools/scripts/publish-nx-mcp-patched.mjs\`.
 `;
 
 const worktree = mkdtempSync(join(tmpdir(), `${DIST_BRANCH}-`));
@@ -115,7 +140,7 @@ try {
         'commit',
         '-q',
         '-m',
-        `Build nx-mcp from ${SOURCE_BRANCH} (${sourceSha.slice(0, 7)})`,
+        `Build nx-mcp from ${SOURCES.map((source) => `${source.branch} (${source.sha.slice(0, 7)})`).join(', ')}`,
       ],
       inWorktree,
     );

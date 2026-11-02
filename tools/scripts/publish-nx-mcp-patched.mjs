@@ -15,13 +15,6 @@ const DIST_BRANCH = 'nx-mcp-patched';
 // `marker` is a string that only a bundle built with the fix contains.
 const SOURCES = [
   {
-    branch: 'fix/nx-cloud-oauth-credentials',
-    pr: 3299,
-    summary:
-      'Nx Cloud requests authenticate with the `nx login` OAuth credential',
-    marker: 'Nx-Cloud-OAuth-Access-Token',
-  },
-  {
     branch: 'fix/ci-information-pr-number-branch',
     pr: 3300,
     summary:
@@ -101,12 +94,15 @@ for (const source of SOURCES) {
 
 const readme = `# nx-mcp (patched build)
 
-Prebuilt \`nx-mcp\` with these changes, which are proposed upstream:
+Prebuilt \`nx-mcp\` from nx-console \`master\` with these changes, which are proposed upstream:
 
 ${SOURCES.map(
   (source) =>
     `- [nrwl/nx-console#${source.pr}](https://github.com/nrwl/nx-console/pull/${source.pr}): ${source.summary}. From [\`${source.branch}\`](https://github.com/${REPO}/tree/${source.branch}) at \`${source.sha}\`.`,
 ).join('\n')}
+
+Being built from \`master\`, it also has changes merged there that the published \`nx-mcp\`
+may not include yet.
 
 This branch holds only the build output, so \`npx\` can run it without cloning or building
 nx-console:

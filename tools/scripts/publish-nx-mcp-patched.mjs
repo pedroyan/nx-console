@@ -1,7 +1,8 @@
 // tools/scripts/publish-nx-mcp-patched.mjs
 // Usage: node tools/scripts/publish-nx-mcp-patched.mjs [--dry-run]
 //
-// Builds nx-mcp from this branch (the SOURCES fixes plus this script) and commits the bundle to the orphan nx-mcp-patched branch, which holds only main.js,
+// Builds nx-mcp from this branch (nx-console master, the SOURCES fixes and this script)
+// and commits the bundle to the orphan nx-mcp-patched branch, which holds only main.js,
 // package.json and README.md so `npx github:pedroyan/nx-console#nx-mcp-patched` runs
 // it without cloning or building nx-console. --dry-run commits locally but skips the push.
 import { execFileSync } from 'child_process';
@@ -12,10 +13,14 @@ import { join } from 'path';
 const REMOTE = 'origin';
 const REPO = 'pedroyan/nx-console';
 const DIST_BRANCH = 'nx-mcp-patched';
-// `marker` is a string that only a bundle built with the fix contains.
-const SOURCES = [
+// Fixes not yet merged upstream, each carried from its own branch, which this branch
+// must be rebased onto. `marker` is a string that only a bundle built with the fix contains.
+const SOURCES = [];
+// Fixes already merged into master that no published nx-mcp includes yet. The build
+// picks them up from master; the marker check proves it did. Drop an entry once a
+// release ships it, and the whole branch once both lists are empty.
+const UNRELEASED = [
   {
-    branch: 'fix/ci-information-pr-number-branch',
     pr: 3300,
     summary:
       'CI tools find the CIPE for a branch when Nx Cloud labels it with the PR number',
@@ -84,26 +89,49 @@ execFileSync(
 const bundle = readFileSync('dist/apps/nx-mcp/main.js', 'utf8');
 // The workspace libs resolve through node_modules symlinks, so a node_modules shared
 // with another checkout silently bundles that checkout's libs instead of this branch's.
-for (const source of SOURCES) {
-  if (!bundle.includes(source.marker)) {
+for (const fix of [...SOURCES, ...UNRELEASED]) {
+  if (!bundle.includes(fix.marker)) {
     fail(
-      `The bundle lacks the fix from ${source.branch}. Is node_modules/@nx-console linked to another checkout?`,
+      `The bundle lacks the fix from nrwl/nx-console#${fix.pr}. Is this branch rebased onto master, and is node_modules/@nx-console linked to this checkout?`,
     );
   }
 }
+// The latest nx-mcp release this build is ahead of, for the README and the version.
+const release = git([
+  'describe',
+  '--tags',
+  '--abbrev=0',
+  '--match',
+  'nx-mcp-v*',
+  'HEAD',
+]).replace(/^nx-mcp-v/, '');
+const fixLine = (fix) =>
+  `- [nrwl/nx-console#${fix.pr}](https://github.com/nrwl/nx-console/pull/${fix.pr}): ${fix.summary}.`;
 
 const readme = `# nx-mcp (patched build)
 
-Prebuilt \`nx-mcp\` from nx-console \`master\` with these changes, which are proposed upstream:
+Prebuilt \`nx-mcp\` from nx-console \`master\`, ahead of the latest published release
+(\`${release}\`).
+${
+  SOURCES.length
+    ? `
+It carries these changes, which are proposed upstream:
 
 ${SOURCES.map(
   (source) =>
-    `- [nrwl/nx-console#${source.pr}](https://github.com/nrwl/nx-console/pull/${source.pr}): ${source.summary}. From [\`${source.branch}\`](https://github.com/${REPO}/tree/${source.branch}) at \`${source.sha}\`.`,
+    `${fixLine(source)} From [\`${source.branch}\`](https://github.com/${REPO}/tree/${source.branch}) at \`${source.sha}\`.`,
 ).join('\n')}
+`
+    : ''
+}${
+  UNRELEASED.length
+    ? `
+It includes these changes, merged into \`master\` but not yet in a published release:
 
-Being built from \`master\`, it also has changes merged there that the published \`nx-mcp\`
-may not include yet.
-
+${UNRELEASED.map(fixLine).join('\n')}
+`
+    : ''
+}
 This branch holds only the build output, so \`npx\` can run it without cloning or building
 nx-console:
 
@@ -115,8 +143,18 @@ Delete this branch once these changes ship in the published \`nx-mcp\`.
 
 Built from \`${buildBranch}\` at \`${headSha}\`. To update it, rebase
 [\`nx-mcp-patched-build\`](https://github.com/${REPO}/tree/nx-mcp-patched-build) onto
-the branches above and run \`node tools/scripts/publish-nx-mcp-patched.mjs\`.
+\`master\`${SOURCES.length ? ' and the branches above' : ''} and run \`node tools/scripts/publish-nx-mcp-patched.mjs\`.
 `;
+
+const packageJson = {
+  name: 'nx-mcp',
+  // Build metadata, so the version names both the release it builds on and the commit.
+  version: `${release}+patched.${headSha.slice(0, 7)}`,
+  description: `nx-mcp built from ${REPO} ${buildBranch} (nx-console master ahead of ${release})`,
+  license: 'MIT',
+  bin: 'main.js',
+  files: ['main.js', 'README.md'],
+};
 
 const worktree = mkdtempSync(join(tmpdir(), `${DIST_BRANCH}-`));
 try {
@@ -126,6 +164,10 @@ try {
     mode: 0o755,
   });
   writeFileSync(join(worktree, 'README.md'), readme);
+  writeFileSync(
+    join(worktree, 'package.json'),
+    `${JSON.stringify(packageJson, null, 2)}\n`,
+  );
 
   git(['add', '-A'], inWorktree);
   if (!git(['status', '--porcelain'], inWorktree)) {
@@ -136,7 +178,7 @@ try {
         'commit',
         '-q',
         '-m',
-        `Build nx-mcp from ${SOURCES.map((source) => `${source.branch} (${source.sha.slice(0, 7)})`).join(', ')}`,
+        `Build nx-mcp from ${[`${buildBranch} (${headSha.slice(0, 7)})`, ...SOURCES.map((source) => `${source.branch} (${source.sha.slice(0, 7)})`)].join(', ')}`,
       ],
       inWorktree,
     );

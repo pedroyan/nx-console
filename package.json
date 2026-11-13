@@ -1,8 +1,11 @@
 {
   "name": "nx-mcp",
-  "version": "0.25.0-oauth-credentials.0",
-  "description": "nx-mcp built from pedroyan/nx-console fix/nx-cloud-oauth-credentials (nrwl/nx-console#3299)",
+  "version": "0.25.3+patched.2008595",
+  "description": "nx-mcp built from pedroyan/nx-console nx-mcp-patched-build (nx-console master ahead of 0.25.3)",
   "license": "MIT",
   "bin": "main.js",
-  "files": ["main.js", "README.md"]
+  "files": [
+    "main.js",
+    "README.md"
+  ]
 }
